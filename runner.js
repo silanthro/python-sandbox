@@ -13,14 +13,6 @@ function log(...args) {
 
 log("✅ Pyodide loaded");
 
-// Load micropip silently
-log("🔧 Installing micropip...");
-const originalConsoleLog = console.log;
-console.log = () => {};
-await pyodide.loadPackage("micropip");
-console.log = originalConsoleLog;
-log("✅ Micropip ready");
-
 // Set up shared folder
 pyodide.FS.mkdirTree(VFS_DIR);
 log("🔃 Syncing host files into VFS...");
@@ -66,6 +58,14 @@ for await (const line of readLines(Deno.stdin)) {
 
   try {
     if (Array.isArray(input.packages) && input.packages.length > 0) {
+      // Load micropip silently
+      log("🔧 Installing micropip...");
+      const originalConsoleLog = console.log;
+      console.log = () => {};
+      await pyodide.loadPackage("micropip");
+      console.log = originalConsoleLog;
+      log("✅ Micropip ready");
+
       log("📦 Installing packages:", input.packages);
       const installCode = `
 import micropip
