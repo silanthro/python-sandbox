@@ -13,16 +13,26 @@ function log(...args) {
 
 log("✅ Pyodide loaded");
 
-// Set up shared folder
-pyodide.FS.mkdirTree(VFS_DIR);
-log("🔃 Syncing host files into VFS...");
+let sharedFolderExists = false;
+try {
+  const stat = await Deno.stat(SHARED_DIR);
+  sharedFolderExists = stat.isDirectory;
+} catch {
+  log(`⚠️ Shared folder "${SHARED_DIR}" not found — skipping sync.`);
+}
 
-for await (const entry of Deno.readDir(SHARED_DIR)) {
-  if (entry.isFile) {
-    const path = join(SHARED_DIR, entry.name);
-    const data = await Deno.readFile(path);
-    pyodide.FS.writeFile(`${VFS_DIR}/${entry.name}`, data);
-    log("📥 Preloaded:", entry.name);
+// Only sync files if folder exists
+if (sharedFolderExists) {
+  pyodide.FS.mkdirTree(VFS_DIR);
+  log("🔃 Syncing host files into VFS...");
+
+  for await (const entry of Deno.readDir(SHARED_DIR)) {
+    if (entry.isFile) {
+      const path = join(SHARED_DIR, entry.name);
+      const data = await Deno.readFile(path);
+      pyodide.FS.writeFile(`${VFS_DIR}/${entry.name}`, data);
+      log("📥 Preloaded:", entry.name);
+    }
   }
 }
 
@@ -30,6 +40,10 @@ for await (const entry of Deno.readDir(SHARED_DIR)) {
 const PY_SETUP = `
 import logging
 import builtins
+import warnings
+
+warnings.simplefilter("default")
+logging.captureWarnings(True)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -37,6 +51,7 @@ logging.basicConfig(
 )
 
 def print(*args, **kwargs):
+    kwargs.setdefault("flush", True)
     builtins.print("[py]", *args, **kwargs)
 `;
 
@@ -97,29 +112,32 @@ await _()
     log("❌ Execution error:", trimmed);
   }
 
-  // Sync files from VFS → host
-  log("🔃 Syncing VFS → host...");
-  const files = pyodide.FS.readdir(VFS_DIR);
-  log("📁 VFS contents before sync:", files);
+  if (sharedFolderExists) {
+    log("🔃 Syncing VFS → host...");
+    const files = pyodide.FS.readdir(VFS_DIR);
+    log("📁 VFS contents before sync:", files);
 
-  for (const name of files) {
-    if (name === "." || name === "..") continue;
+    for (const name of files) {
+      if (name === "." || name === "..") continue;
 
-    const vfsPath = `${VFS_DIR}/${name}`;
-    const hostPath = join(SHARED_DIR, name);
+      const vfsPath = `${VFS_DIR}/${name}`;
+      const hostPath = join(SHARED_DIR, name);
 
-    try {
-      const stat = pyodide.FS.stat(vfsPath);
-      if (pyodide.FS.isFile(stat.mode)) {
-        const data = pyodide.FS.readFile(vfsPath);
-        await Deno.writeFile(hostPath, data);
-        log("📤 Synced to host:", name);
-      } else {
-        log("⚠️ Skipped non-file:", name);
+      try {
+        const stat = pyodide.FS.stat(vfsPath);
+        if (pyodide.FS.isFile(stat.mode)) {
+          const data = pyodide.FS.readFile(vfsPath);
+          await Deno.writeFile(hostPath, data);
+          log("📤 Synced to host:", name);
+        } else {
+          log("⚠️ Skipped non-file:", name);
+        }
+      } catch (err) {
+        console.error(`❌ Failed to sync ${name}:`, err.message);
       }
-    } catch (err) {
-      console.error(`❌ Failed to sync ${name}:`, err.message);
     }
+  } else {
+    log("⚠️ Skipping VFS → host sync because shared folder is missing");
   }
 
   console.log("@@DONE@@");
