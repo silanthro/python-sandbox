@@ -20,14 +20,14 @@ def _read_lines(stream, output_queue):
 
 def run_code(
     code: str,
-    timeout=5,
+    timeout: float = 5,
 ):
     """
     Runs Python in a sandbox implemented via Deno + Pyodide
 
     Args:
     - code (str): Python code to run
-    - timeout (float): Timeout in seconds
+    - timeout (float): Timeout in seconds, defaults to 5
 
     Returns:
         A generator yielding any logs and a final output {"output": <string representing result of code>}
