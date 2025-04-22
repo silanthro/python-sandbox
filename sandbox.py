@@ -31,7 +31,6 @@ def run_code(
 
     Returns:
         A generator yielding any logs and a final output {"output": <string representing result of code>}
-        Note that this acts like a REPL i.e. the last variable in the code snippet will be returned
     """
     payload = {"code": code}
     shared_dir = os.getenv("SANDBOX_SHARED_DIR")
@@ -71,6 +70,8 @@ def run_code(
     result_line = None
     start = time.time()
 
+    last_print = None
+
     while True:
         try:
             line = output_queue.get(timeout=0.1)
@@ -83,6 +84,7 @@ def run_code(
             elif line.startswith("@@DONE@@"):
                 break
             elif line.startswith("[py]"):
+                last_print = line[4:].strip()
                 yield f"[python] {line[4:].strip()}"
             elif line.startswith("[runner]"):
                 yield f"[deno log] {line[8:].strip()}"
@@ -103,6 +105,10 @@ def run_code(
     process.terminate()
 
     if result_line:
-        yield json.loads(result_line)
+        result = json.loads(result_line)
+        if result == {}:
+            yield {"output": last_print}
+        else:
+            yield json.loads(result_line)
     else:
         yield {"error": "Execution ended with DONE but no RESULT"}
