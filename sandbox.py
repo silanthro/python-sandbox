@@ -60,7 +60,10 @@ def run_code(code_string: str, packages=None):
                     continue
 
                 if key.fileobj == deno_process.stderr:
-                    print("[deno log]", line.strip())
+                    if line.startswith("[log]"):
+                        print("[python log]", line[5:].strip())
+                    else:
+                        print("[deno log]", line.strip())
 
                 elif key.fileobj == deno_process.stdout:
                     if line.startswith("@@RESULT@@"):
