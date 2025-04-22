@@ -1,0 +1,7 @@
+[index]
+
+description = "Basic Python sandbox based on Deno + Pyodide"
+
+tools = [
+    "sandbox.run_code",
+]
