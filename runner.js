@@ -66,7 +66,7 @@ for await (const line of readLines(Deno.stdin)) {
   let input;
   try {
     input = JSON.parse(line);
-    log("🔍 Parsed input:", input);
+    log(`🔍 Parsed input: ${JSON.stringify(input)}`);
   } catch (error) {
     console.error("❌ Invalid JSON input:", error.message);
     continue;
