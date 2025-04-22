@@ -60,14 +60,17 @@ def run_code(code_string: str, packages=None):
                     continue
 
                 if key.fileobj == deno_process.stderr:
-                    print("[stderr]", line.strip())
-                    # pass
+                    print("[deno log]", line.strip())
 
-                elif line.startswith("@@RESULT@@"):
-                    result_line = line.removeprefix("@@RESULT@@").strip()
-
-                elif line.startswith("@@DONE@@"):
-                    if result_line:
-                        return json.loads(result_line)
+                elif key.fileobj == deno_process.stdout:
+                    if line.startswith("@@RESULT@@"):
+                        result_line = line.removeprefix("@@RESULT@@").strip()
+                    elif line.startswith("@@DONE@@"):
+                        if result_line:
+                            return json.loads(result_line)
+                        else:
+                            return {"error": "Execution ended with DONE but no RESULT"}
+                    elif line.startswith("[py]"):
+                        print("[python]", line[4:].strip())
                     else:
-                        return {"error": "Execution ended with DONE but no RESULT"}
+                        print("[stdout]", line.strip())

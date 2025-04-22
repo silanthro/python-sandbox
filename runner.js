@@ -6,29 +6,22 @@ const SHARED_DIR = "./shared";
 const VFS_DIR = "/shared";
 const pyodide = await pyodideModule.loadPyodide();
 
+// Log only internal runner state to stderr
 function log(...args) {
-  console.error("[runner]", ...args); // Log to stderr
-}
-function output(...args) {
-  console.log(...args);
+  console.error("[runner]", ...args);
 }
 
 log("✅ Pyodide loaded");
 
-const REDIRECT_STDOUT_CODE = `
-import sys
-import builtins
+// Load micropip silently
+log("🔧 Installing micropip...");
+const originalConsoleLog = console.log;
+console.log = () => {};
+await pyodide.loadPackage("micropip");
+console.log = originalConsoleLog;
+log("✅ Micropip ready");
 
-class RedirectStdout:
-    def write(self, s):
-        if s.strip():
-            builtins.print(s, file=sys.__stderr__)
-    def flush(self):
-        pass
-
-sys.stdout = RedirectStdout()
-`;
-
+// Set up shared folder
 pyodide.FS.mkdirTree(VFS_DIR);
 log("🔃 Syncing host files into VFS...");
 
@@ -41,12 +34,19 @@ for await (const entry of Deno.readDir(SHARED_DIR)) {
   }
 }
 
-log("🔧 Installing micropip...");
-const originalLog = console.log;
-console.log = () => {};
-await pyodide.loadPackage("micropip");
-console.log = originalLog;
-log("✅ Micropip ready");
+// Bootstrap: inject logging setup + print prefix
+const PY_SETUP = `
+import logging
+import builtins
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="[log] %(levelname)s: %(message)s"
+)
+
+def print(*args, **kwargs):
+    builtins.print("[py]", *args, **kwargs)
+`;
 
 for await (const line of readLines(Deno.stdin)) {
   log("📩 Received code input");
@@ -55,7 +55,7 @@ for await (const line of readLines(Deno.stdin)) {
     input = JSON.parse(line);
     log("🔍 Parsed input:", input);
   } catch (error) {
-    log("❌ Invalid JSON input:", error.message);
+    console.error("❌ Invalid JSON input:", error.message);
     continue;
   }
 
@@ -65,41 +65,44 @@ for await (const line of readLines(Deno.stdin)) {
   }
 
   try {
-    const preamble = REDIRECT_STDOUT_CODE;
-
     if (Array.isArray(input.packages) && input.packages.length > 0) {
       log("📦 Installing packages:", input.packages);
       const installCode = `
 import micropip
-await micropip.install(${JSON.stringify(input.packages)})
+async def _():
+    try:
+        await micropip.install(${JSON.stringify(input.packages)})
+    except Exception as e:
+        import sys
+        sys.stderr.write("micropip failed: " + str(e) + "\\n")
+        raise
+await _()
 `;
-      await pyodide.runPythonAsync(preamble + installCode);
+      await pyodide.runPythonAsync(installCode);
       log("✅ Packages installed");
     }
 
+    const fullCode = [PY_SETUP, input.code || ""].join("\n");
+
     log("🚀 Running user code...");
-    const fullCode = preamble + "\n" + (input.code || "");
-    log("🧾 Full code to execute:", fullCode);
+    log("🧾 Full code to execute:\n" + fullCode);
+
     const result = await pyodide.runPythonAsync(fullCode);
-    output("@@RESULT@@" + JSON.stringify({ output: result }));
+
+    console.log("@@RESULT@@" + JSON.stringify({ output: result }));
     log("✅ Code executed successfully");
   } catch (error) {
-    output(
-      "@@RESULT@@" +
-        JSON.stringify({
-          error: error.stack || error.message || "Unknown error",
-        })
-    );
-    log("❌ Execution error stack:", error.stack || error.message);
-    output("@@DONE@@");
+    const trimmed = error.stack || error.message || "Unknown error";
+    console.log("@@RESULT@@" + JSON.stringify({ error: trimmed }));
+    log("❌ Execution error:", trimmed);
   }
 
-  // Sync back all new/updated files
+  // Sync files from VFS → host
   log("🔃 Syncing VFS → host...");
-  const filesInShared = pyodide.FS.readdir(VFS_DIR);
-  log("📁 VFS contents before sync:", JSON.stringify(filesInShared));
+  const files = pyodide.FS.readdir(VFS_DIR);
+  log("📁 VFS contents before sync:", files);
 
-  for (const name of filesInShared) {
+  for (const name of files) {
     if (name === "." || name === "..") continue;
 
     const vfsPath = `${VFS_DIR}/${name}`;
@@ -107,17 +110,17 @@ await micropip.install(${JSON.stringify(input.packages)})
 
     try {
       const stat = pyodide.FS.stat(vfsPath);
-      log(`🔍 Checking ${name}: mode=${stat.mode}`);
       if (pyodide.FS.isFile(stat.mode)) {
         const data = pyodide.FS.readFile(vfsPath);
         await Deno.writeFile(hostPath, data);
         log("📤 Synced to host:", name);
       } else {
-        log("⚠️ Not a file, skipping:", name);
+        log("⚠️ Skipped non-file:", name);
       }
     } catch (err) {
-      log(`❌ Failed to sync ${name}:`, err.message);
+      console.error(`❌ Failed to sync ${name}:`, err.message);
     }
   }
-  output("@@DONE@@");
+
+  console.log("@@DONE@@");
 }
