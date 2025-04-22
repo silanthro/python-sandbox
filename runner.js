@@ -2,8 +2,10 @@ import pyodideModule from "npm:pyodide/pyodide.js";
 import { readLines } from "https://deno.land/std@0.186.0/io/mod.ts";
 import { join } from "https://deno.land/std@0.186.0/path/mod.ts";
 
-const SHARED_DIR = "./shared";
+const SHARED_DIR = Deno.env.get("SHARED_DIR");
 const VFS_DIR = "/shared";
+const ALLOW_WRITE =
+  (await Deno.permissions.query({ name: "write" })).state === "granted";
 const pyodide = await pyodideModule.loadPyodide();
 
 // Log only internal runner state to stderr
@@ -14,11 +16,15 @@ function log(...args) {
 log("✅ Pyodide loaded");
 
 let sharedFolderExists = false;
-try {
-  const stat = await Deno.stat(SHARED_DIR);
-  sharedFolderExists = stat.isDirectory;
-} catch {
-  log(`⚠️ Shared folder "${SHARED_DIR}" not found — skipping sync.`);
+if (SHARED_DIR) {
+  try {
+    const stat = await Deno.stat(SHARED_DIR);
+    sharedFolderExists = stat.isDirectory;
+  } catch {
+    log(`⚠️ Shared folder "${SHARED_DIR}" not found — skipping sync.`);
+  }
+} else {
+  log("⚠️ No shared folder provided — skipping sync.");
 }
 
 // Only sync files if folder exists
@@ -31,7 +37,7 @@ if (sharedFolderExists) {
       const path = join(SHARED_DIR, entry.name);
       const data = await Deno.readFile(path);
       pyodide.FS.writeFile(`${VFS_DIR}/${entry.name}`, data);
-      log("📥 Preloaded:", entry.name);
+      // log("📥 Preloaded:", entry.name);
     }
   }
 }
@@ -100,7 +106,7 @@ await _()
     const fullCode = [PY_SETUP, input.code || ""].join("\n");
 
     log("🚀 Running user code...");
-    log("🧾 Full code to execute:\n" + fullCode);
+    // log(`🧾 Full code to execute: ${JSON.stringify(fullCode)}`);
 
     const result = await pyodide.runPythonAsync(fullCode);
 
@@ -112,10 +118,9 @@ await _()
     log("❌ Execution error:", trimmed);
   }
 
-  if (sharedFolderExists) {
+  if (ALLOW_WRITE && sharedFolderExists) {
     log("🔃 Syncing VFS → host...");
     const files = pyodide.FS.readdir(VFS_DIR);
-    log("📁 VFS contents before sync:", files);
 
     for (const name of files) {
       if (name === "." || name === "..") continue;
@@ -128,14 +133,16 @@ await _()
         if (pyodide.FS.isFile(stat.mode)) {
           const data = pyodide.FS.readFile(vfsPath);
           await Deno.writeFile(hostPath, data);
-          log("📤 Synced to host:", name);
+          // log("📤 Synced to host:", name);
         } else {
-          log("⚠️ Skipped non-file:", name);
+          // log("⚠️ Skipped non-file:", name);
         }
       } catch (err) {
-        console.error(`❌ Failed to sync ${name}:`, err.message);
+        // console.error(`❌ Failed to sync ${name}:`, err.message);
       }
     }
+  } else if (!ALLOW_WRITE) {
+    log("⚠️ Skipping VFS → host sync because --allow-write was not enabled");
   } else {
     log("⚠️ Skipping VFS → host sync because shared folder is missing");
   }
