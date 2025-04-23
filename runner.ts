@@ -9,11 +9,11 @@ const ALLOW_WRITE =
 const pyodide = await pyodideModule.loadPyodide();
 
 // Log only internal runner state to stderr
-function log(...args) {
+function log(...args: string[]) {
   console.error("[runner]", ...args);
 }
 
-log("✅ Pyodide loaded");
+// log("✅ Pyodide loaded");
 
 let sharedFolderExists = false;
 if (SHARED_DIR) {
@@ -28,7 +28,7 @@ if (SHARED_DIR) {
 }
 
 // Only sync files if folder exists
-if (sharedFolderExists) {
+if (sharedFolderExists && SHARED_DIR) {
   pyodide.FS.mkdirTree(VFS_DIR);
   log("🔃 Syncing host files into VFS...");
 
@@ -62,13 +62,16 @@ def print(*args, **kwargs):
 `;
 
 for await (const line of readLines(Deno.stdin)) {
-  log("📩 Received code input");
+  // log("📩 Received code input");
   let input;
   try {
     input = JSON.parse(line);
     log(`🔍 Parsed input: ${JSON.stringify(input)}`);
   } catch (error) {
-    console.error("❌ Invalid JSON input:", error.message);
+    let message;
+    if (error instanceof Error) message = error.message;
+    else message = String(error);
+    console.error("❌ Invalid JSON input:", message);
     continue;
   }
 
@@ -80,14 +83,14 @@ for await (const line of readLines(Deno.stdin)) {
   try {
     if (Array.isArray(input.packages) && input.packages.length > 0) {
       // Load micropip silently
-      log("🔧 Installing micropip...");
+      // log("🔧 Installing micropip...");
       const originalConsoleLog = console.log;
       console.log = () => {};
       await pyodide.loadPackage("micropip");
       console.log = originalConsoleLog;
-      log("✅ Micropip ready");
+      // log("✅ Micropip ready");
 
-      log("📦 Installing packages:", input.packages);
+      // log("📦 Installing packages:", input.packages);
       const installCode = `
 import micropip
 async def _():
@@ -100,7 +103,7 @@ async def _():
 await _()
 `;
       await pyodide.runPythonAsync(installCode);
-      log("✅ Packages installed");
+      // log("✅ Packages installed");
     }
 
     const fullCode = [PY_SETUP, input.code || ""].join("\n");
@@ -113,12 +116,14 @@ await _()
     console.log("@@RESULT@@" + JSON.stringify({ output: result }));
     log("✅ Code executed successfully");
   } catch (error) {
-    const trimmed = error.stack || error.message || "Unknown error";
-    console.log("@@RESULT@@" + JSON.stringify({ error: trimmed }));
-    log("❌ Execution error:", trimmed);
+    let message;
+    if (error instanceof Error) message = error.stack || error.message;
+    else message = "Unknown error";
+    console.log("@@RESULT@@" + JSON.stringify({ error: message }));
+    log("❌ Execution error:", message);
   }
 
-  if (ALLOW_WRITE && sharedFolderExists) {
+  if (sharedFolderExists && ALLOW_WRITE && SHARED_DIR) {
     log("🔃 Syncing VFS → host...");
     const files = pyodide.FS.readdir(VFS_DIR);
 
@@ -137,7 +142,7 @@ await _()
         } else {
           // log("⚠️ Skipped non-file:", name);
         }
-      } catch (err) {
+      } catch {
         // console.error(`❌ Failed to sync ${name}:`, err.message);
       }
     }

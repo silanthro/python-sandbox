@@ -46,7 +46,7 @@ def run_code(
     if packages:
         command.append("--allow-net")
     module_dir = os.path.dirname(os.path.abspath(__file__))
-    runner_js_path = os.path.join(module_dir, "runner.js")
+    runner_js_path = os.path.join(module_dir, "runner.ts")
     command.append(runner_js_path)
 
     process = subprocess.Popen(
