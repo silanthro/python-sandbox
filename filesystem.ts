@@ -98,34 +98,47 @@ export default class FileSystemHelper {
     this.before = this.snapshotVFS();
   }
 
+  async syncOutHelper(mountedFolder: string, toSync: string[]) {
+    const paths = this.pyodide.FS.readdir(mountedFolder);
+    for (const name of paths) {
+      if ([".", ".."].includes(name)) continue;
+
+      const vfsPath = join(mountedFolder, name);
+      const hostPath = vfsPath.replace(this.VFS_DIR, this.SHARED_DIR);
+
+      try {
+        const stat = this.pyodide.FS.stat(vfsPath);
+        if (this.pyodide.FS.isFile(stat.mode)) {
+          if (!toSync.includes(vfsPath)) continue;
+          const data = this.pyodide.FS.readFile(vfsPath);
+          await Deno.writeFile(hostPath, data);
+          // this.log("📤 Synced to host:", name);
+        } else {
+          if (toSync.includes(vfsPath)) {
+            await Deno.mkdir(hostPath);
+          }
+          await this.syncOutHelper(vfsPath, toSync);
+        }
+      } catch (error) {
+        let message;
+        if (error instanceof Error) message = error.message;
+        else message = String(error);
+        console.error(`❌ Failed to sync ${name}:`, message);
+      }
+    }
+  }
+
   async syncOut(mountedFolder: string) {
     this.after = this.snapshotVFS();
     const diff = this.diffVFS();
 
     const toSync = diff.added.concat(diff.modified);
 
-    const paths = this.pyodide.FS.readdir(mountedFolder);
-    for (const name of paths) {
-      if ([".", ".."].includes(name)) continue;
+    this.syncOutHelper(mountedFolder, toSync);
 
-      const vfsPath = join(mountedFolder, name);
-
-      if (!toSync.includes(vfsPath)) continue;
-
-      const hostPath = vfsPath.replace(this.VFS_DIR, this.SHARED_DIR);
-
-      try {
-        const stat = this.pyodide.FS.stat(vfsPath);
-        if (this.pyodide.FS.isFile(stat.mode)) {
-          const data = this.pyodide.FS.readFile(vfsPath);
-          await Deno.writeFile(hostPath, data);
-          // this.log("📤 Synced to host:", name);
-        } else {
-          await this.syncOut(vfsPath);
-        }
-      } catch {
-        // console.error(`❌ Failed to sync ${name}:`, err.message);
-      }
+    for (let i = 0; i < diff.deleted.length; i++) {
+      const path = diff.deleted[i];
+      await Deno.remove(path.replace(this.VFS_DIR, this.SHARED_DIR));
     }
   }
 }

@@ -69,7 +69,6 @@ for await (const line of readLines(Deno.stdin)) {
     if (error instanceof Error) message = error.message;
     else message = String(error);
     console.error("❌ Invalid JSON input:", message);
-    continue;
   }
 
   if (input.shutdown) {
