@@ -85,22 +85,17 @@ export default class FileSystemHelper {
   async syncInHelper(localFolder: string) {
     if (this.verbose) this.log(`Syncing in folder: ${localFolder}`);
     for await (const entry of Deno.readDir(localFolder)) {
-      const path = join(localFolder, entry.name);
+      const localPath = join(localFolder, entry.name);
+      const vfsPath = localPath.replace(this.SHARED_DIR, this.VFS_DIR);
       if ([".", ".."].includes(entry.name)) {
         continue;
       } else if (entry.isFile) {
-        const data = await Deno.readFile(path);
-        if (this.verbose)
-          this.log(
-            `Syncing in file: ${path.replace(this.SHARED_DIR, this.VFS_DIR)}`
-          );
-        this.pyodide.FS.writeFile(
-          path.replace(this.SHARED_DIR, this.VFS_DIR),
-          data
-        );
+        const data = await Deno.readFile(localPath);
+        if (this.verbose) this.log(`Syncing in file: ${localPath}`);
+        this.pyodide.FS.writeFile(vfsPath, data);
       } else {
-        this.pyodide.FS.mkdirTree(path);
-        await this.syncInHelper(path);
+        this.pyodide.FS.mkdirTree(vfsPath);
+        await this.syncInHelper(localPath);
       }
     }
   }
