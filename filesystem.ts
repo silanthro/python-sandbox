@@ -134,7 +134,7 @@ export default class FileSystemHelper {
 
     const toSync = diff.added.concat(diff.modified);
 
-    this.syncOutHelper(mountedFolder, toSync);
+    await this.syncOutHelper(mountedFolder, toSync);
 
     for (let i = 0; i < diff.deleted.length; i++) {
       const path = diff.deleted[i];
