@@ -49,7 +49,7 @@ def run_code(
     runner_js_path = os.path.join(module_dir, "runner.ts")
     command.append(runner_js_path)
 
-    env_var = {"VERBOSE": os.getenv("VERBOSE")}
+    env_var = {"VERBOSE": os.getenv("VERBOSE", "False")}
     if shared_dir:
         env_var["SHARED_DIR"] = shared_dir
 
