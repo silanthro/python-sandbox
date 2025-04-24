@@ -102,14 +102,15 @@ export default class FileSystemHelper {
     this.after = this.snapshotVFS();
     const diff = this.diffVFS();
 
+    const toSync = diff.added.concat(diff.modified);
+
     const paths = this.pyodide.FS.readdir(mountedFolder);
     for (const name of paths) {
       if ([".", ".."].includes(name)) continue;
 
       const vfsPath = join(mountedFolder, name);
 
-      if (!diff.added.includes(vfsPath)) continue;
-      if (!diff.modified.includes(vfsPath)) continue;
+      if (!toSync.includes(vfsPath)) continue;
 
       const hostPath = vfsPath.replace(this.VFS_DIR, this.SHARED_DIR);
 
