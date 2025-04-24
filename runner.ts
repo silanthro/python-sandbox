@@ -2,6 +2,8 @@ import pyodideModule from "npm:pyodide/pyodide.js";
 import { readLines } from "https://deno.land/std@0.186.0/io/mod.ts";
 import { join } from "https://deno.land/std@0.186.0/path/mod.ts";
 
+import FileSystemHelper from "./filesystem.ts";
+
 const SHARED_DIR = join(Deno.env.get("SHARED_DIR") as string);
 const VFS_DIR = "/shared";
 const ALLOW_WRITE =
@@ -12,6 +14,9 @@ const pyodide = await pyodideModule.loadPyodide();
 function log(...args: string[]) {
   console.error("[runner]", ...args);
 }
+
+// FileSystemHelper for syncing
+const fsHelper = new FileSystemHelper(pyodide, SHARED_DIR, VFS_DIR, log);
 
 // log("✅ Pyodide loaded");
 
@@ -27,49 +32,11 @@ if (SHARED_DIR) {
   log("⚠️ No shared folder provided — skipping sync.");
 }
 
-async function syncIn(localFolder: string) {
-  for await (const entry of Deno.readDir(localFolder)) {
-    const path = join(localFolder, entry.name);
-    if ([".", ".."].includes(entry.name)) {
-      continue;
-    } else if (entry.isFile) {
-      const data = await Deno.readFile(path);
-      pyodide.FS.writeFile(path.replace(SHARED_DIR, VFS_DIR), data);
-    } else {
-      pyodide.FS.mkdirTree(path);
-      await syncIn(path);
-    }
-  }
-}
-
-async function syncOut(mountedFolder: string) {
-  const paths = pyodide.FS.readdir(mountedFolder);
-  for (const name of paths) {
-    if (name === "." || name === "..") continue;
-
-    const vfsPath = `${mountedFolder}/${name}`;
-    const hostPath = vfsPath.replace(VFS_DIR, SHARED_DIR);
-
-    try {
-      const stat = pyodide.FS.stat(vfsPath);
-      if (pyodide.FS.isFile(stat.mode)) {
-        const data = pyodide.FS.readFile(vfsPath);
-        await Deno.writeFile(hostPath, data);
-        // log("📤 Synced to host:", name);
-      } else {
-        await syncOut(vfsPath);
-      }
-    } catch {
-      // console.error(`❌ Failed to sync ${name}:`, err.message);
-    }
-  }
-}
-
 // Only sync files if folder exists
 if (sharedFolderExists && SHARED_DIR) {
   pyodide.FS.mkdirTree(VFS_DIR);
   log("🔃 Syncing host files into VFS...");
-  await syncIn(SHARED_DIR);
+  await fsHelper.syncIn(SHARED_DIR);
 }
 
 // Bootstrap: inject logging setup + print prefix
@@ -155,7 +122,7 @@ await _()
 
   if (sharedFolderExists && ALLOW_WRITE && SHARED_DIR) {
     log("🔃 Syncing VFS → host...");
-    await syncOut(VFS_DIR);
+    await fsHelper.syncOut(VFS_DIR);
   } else if (!ALLOW_WRITE) {
     log("⚠️ Skipping VFS → host sync because --allow-write was not enabled");
   } else {
