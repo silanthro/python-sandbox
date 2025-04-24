@@ -82,7 +82,7 @@ export default class FileSystemHelper {
     return changes;
   }
 
-  async syncIn(localFolder: string) {
+  async syncInHelper(localFolder: string) {
     if (this.verbose) this.log(`Syncing in folder: ${localFolder}`);
     for await (const entry of Deno.readDir(localFolder)) {
       const path = join(localFolder, entry.name);
@@ -100,9 +100,13 @@ export default class FileSystemHelper {
         );
       } else {
         this.pyodide.FS.mkdirTree(path);
-        await this.syncIn(path);
+        await this.syncInHelper(path);
       }
     }
+  }
+
+  async syncIn(localFolder: string) {
+    await this.syncInHelper(localFolder);
     // Take a snapshot for diffing later
     this.before = this.snapshotVFS();
   }
