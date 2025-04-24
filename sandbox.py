@@ -49,12 +49,16 @@ def run_code(
     runner_js_path = os.path.join(module_dir, "runner.ts")
     command.append(runner_js_path)
 
+    env_var = {"VERBOSE": os.getenv("VERBOSE")}
+    if shared_dir:
+        env_var["SHARED_DIR"] = shared_dir
+
     process = subprocess.Popen(
         command,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        env={"SHARED_DIR": shared_dir} if shared_dir else None,
+        env=env_var,
         text=True,
         bufsize=1,
     )
@@ -111,4 +115,4 @@ def run_code(
         else:
             yield json.loads(result_line)
     else:
-        yield {"error": "Execution ended with DONE but no RESULT"}
+        yield {"error": "Execution ended with no RESULT - unclear if successful"}

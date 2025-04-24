@@ -8,20 +8,24 @@ export default class FileSystemHelper {
   log: (...args: string[]) => void;
   before: { [k: string]: "dir" | Uint8Array } = {};
   after: { [k: string]: "dir" | Uint8Array } = {};
+  verbose: boolean;
 
   constructor(
     pyodide: pyodideModule.PyodideInterface,
     SHARED_DIR: string,
     VFS_DIR: string,
-    log: (...args: string[]) => void
+    log: (...args: string[]) => void,
+    verbose: boolean = false
   ) {
     this.pyodide = pyodide;
     this.SHARED_DIR = SHARED_DIR;
     this.VFS_DIR = VFS_DIR;
     this.log = log;
+    this.verbose = verbose;
   }
 
   snapshotVFS() {
+    if (this.verbose) this.log("Taking snapshot");
     const contents = {} as { [k: string]: "dir" | Uint8Array };
 
     const listDirRecursive = (path: string) => {
@@ -79,12 +83,17 @@ export default class FileSystemHelper {
   }
 
   async syncIn(localFolder: string) {
+    if (this.verbose) this.log(`Syncing in folder: ${localFolder}`);
     for await (const entry of Deno.readDir(localFolder)) {
       const path = join(localFolder, entry.name);
       if ([".", ".."].includes(entry.name)) {
         continue;
       } else if (entry.isFile) {
         const data = await Deno.readFile(path);
+        if (this.verbose)
+          this.log(
+            `Syncing in file: ${path.replace(this.SHARED_DIR, this.VFS_DIR)}`
+          );
         this.pyodide.FS.writeFile(
           path.replace(this.SHARED_DIR, this.VFS_DIR),
           data
@@ -99,6 +108,7 @@ export default class FileSystemHelper {
   }
 
   async syncOutHelper(mountedFolder: string, toSync: string[]) {
+    if (this.verbose) this.log(`Syncing out folder: ${mountedFolder}`);
     const paths = this.pyodide.FS.readdir(mountedFolder);
     for (const name of paths) {
       if ([".", ".."].includes(name)) continue;
@@ -111,8 +121,8 @@ export default class FileSystemHelper {
         if (this.pyodide.FS.isFile(stat.mode)) {
           if (!toSync.includes(vfsPath)) continue;
           const data = this.pyodide.FS.readFile(vfsPath);
+          if (this.verbose) this.log(`Syncing out file: ${hostPath}`);
           await Deno.writeFile(hostPath, data);
-          // this.log("📤 Synced to host:", name);
         } else {
           if (toSync.includes(vfsPath)) {
             await Deno.mkdir(hostPath);
@@ -131,6 +141,7 @@ export default class FileSystemHelper {
   async syncOut(mountedFolder: string) {
     this.after = this.snapshotVFS();
     const diff = this.diffVFS();
+    this.log(`Sync diff: ${JSON.stringify(diff)}`);
 
     const toSync = diff.added.concat(diff.modified);
 

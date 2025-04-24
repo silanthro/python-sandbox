@@ -4,6 +4,7 @@ import { join } from "https://deno.land/std@0.186.0/path/mod.ts";
 
 import FileSystemHelper from "./filesystem.ts";
 
+const VERBOSE = Deno.env.get("VERBOSE") === "True";
 const SHARED_DIR = join(Deno.env.get("SHARED_DIR") as string);
 const VFS_DIR = "/shared";
 const ALLOW_WRITE =
@@ -16,7 +17,13 @@ function log(...args: string[]) {
 }
 
 // FileSystemHelper for syncing
-const fsHelper = new FileSystemHelper(pyodide, SHARED_DIR, VFS_DIR, log);
+const fsHelper = new FileSystemHelper(
+  pyodide,
+  SHARED_DIR,
+  VFS_DIR,
+  log,
+  VERBOSE
+);
 
 // log("✅ Pyodide loaded");
 
