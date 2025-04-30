@@ -52,17 +52,21 @@ import logging
 import builtins
 import warnings
 
+# Enable default warning display
 warnings.simplefilter("default")
 logging.captureWarnings(True)
 
+# Setup basic logging
 logging.basicConfig(
     level=logging.INFO,
     format="[log] %(levelname)s: %(message)s"
 )
 
+# Override print to prefix and flatten output to one line
 def print(*args, **kwargs):
     kwargs.setdefault("flush", True)
-    builtins.print("[py]", *args, **kwargs)
+    text = " ".join(str(a) for a in args).replace("\\n", "\\\\n")
+    builtins.print("[py]", text, **kwargs)
 `;
 
 for await (const line of readLines(Deno.stdin)) {
