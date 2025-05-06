@@ -72,7 +72,7 @@ def run_code(
     ).start()
 
     result_line = None
-    start = time.time()
+    start = None
 
     last_print = None
 
@@ -91,6 +91,8 @@ def run_code(
                 last_print = line[4:].strip()
                 yield f"[python] {line[4:].strip()}"
             elif line.startswith("[runner]"):
+                if line.strip() == "[runner] Running user code...":
+                    start = time.time()
                 yield f"[deno log] {line[8:].strip()}"
             elif line.startswith("[log]"):
                 yield f"[python log] {line[5:].strip()}"
@@ -100,11 +102,12 @@ def run_code(
         except queue.Empty:
             pass
 
-        elapsed = time.time() - start
-        if elapsed > timeout:
-            process.kill()
-            yield {"error": "Timeout waiting for code to finish"}
-            return
+        if start:
+            elapsed = time.time() - start
+            if elapsed > timeout:
+                process.kill()
+                yield {"error": "Timeout waiting for code to finish"}
+                return
 
     process.terminate()
 

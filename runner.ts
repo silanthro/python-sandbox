@@ -115,7 +115,7 @@ await _()
 
     const fullCode = [PY_SETUP, input.code || ""].join("\n");
 
-    log("🚀 Running user code...");
+    log("Running user code...");
     // log(`🧾 Full code to execute: ${JSON.stringify(fullCode)}`);
 
     const result = await pyodide.runPythonAsync(fullCode);
