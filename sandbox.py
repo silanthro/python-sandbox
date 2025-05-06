@@ -123,7 +123,7 @@ def run_code(
 
 def get_shared_folder() -> str:
     """
-    Returns the shared folder referenced in the sandbox
+    Returns the local shared folder synced in the sandbox
     """
     return os.getenv("SANDBOX_SHARED_DIR")
 
