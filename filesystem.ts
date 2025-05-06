@@ -10,9 +10,14 @@ import {
 function assertWithin(base: string, target: string, label: string): void {
   const baseResolved = resolve(base);
   const targetResolved = resolve(join(baseResolved, target));
-  const rel = relative(baseResolved, targetResolved);
+  // const rel = relative(baseResolved, targetResolved);
 
-  if (rel.startsWith("..") || resolve(rel).startsWith("/")) {
+  const isInside =
+    targetResolved === baseResolved ||
+    targetResolved.startsWith(baseResolved + "/") ||
+    targetResolved.startsWith(baseResolved + "\\");
+
+  if (!isInside) {
     throw new Error(`❌ Invalid ${label}: "${target}" is outside of "${base}"`);
   }
 }
@@ -46,6 +51,8 @@ export default class FileSystemHelper {
     if (syncInPaths) {
       this.syncInPaths = syncInPaths.map((p) => {
         const rel = isAbsolute(p) ? relative(SHARED_DIR, p) : p;
+        console.log(isAbsolute(p));
+        console.log(rel);
         assertWithin(SHARED_DIR, rel, "syncInPath");
         return rel;
       });
