@@ -1,5 +1,21 @@
 import pyodideModule from "npm:pyodide/pyodide.js";
-import { join } from "https://deno.land/std@0.186.0/path/mod.ts";
+import {
+  dirname,
+  join,
+  relative,
+  resolve,
+  isAbsolute,
+} from "https://deno.land/std@0.186.0/path/mod.ts";
+
+function assertWithin(base: string, target: string, label: string): void {
+  const baseResolved = resolve(base);
+  const targetResolved = resolve(join(baseResolved, target));
+  const rel = relative(baseResolved, targetResolved);
+
+  if (rel.startsWith("..") || resolve(rel).startsWith("/")) {
+    throw new Error(`❌ Invalid ${label}: "${target}" is outside of "${base}"`);
+  }
+}
 
 export default class FileSystemHelper {
   pyodide: pyodideModule.PyodideInterface;
@@ -9,19 +25,39 @@ export default class FileSystemHelper {
   before: { [k: string]: "dir" | Uint8Array } = {};
   after: { [k: string]: "dir" | Uint8Array } = {};
   verbose: boolean;
+  syncInPaths: string[] | undefined;
+  syncOutPaths: string[] | undefined;
 
   constructor(
     pyodide: pyodideModule.PyodideInterface,
     SHARED_DIR: string,
     VFS_DIR: string,
     log: (...args: string[]) => void,
-    verbose: boolean = false
+    verbose: boolean = false,
+    syncInPaths: string[],
+    syncOutPaths: string[]
   ) {
     this.pyodide = pyodide;
     this.SHARED_DIR = SHARED_DIR;
     this.VFS_DIR = VFS_DIR;
     this.log = log;
     this.verbose = verbose;
+    // 🔐 Normalize and validate syncInPaths
+    if (syncInPaths) {
+      this.syncInPaths = syncInPaths.map((p) => {
+        const rel = isAbsolute(p) ? relative(SHARED_DIR, p) : p;
+        assertWithin(SHARED_DIR, rel, "syncInPath");
+        return rel;
+      });
+    }
+    // 🔐 Normalize and validate syncOutPaths
+    if (syncOutPaths) {
+      this.syncOutPaths = syncOutPaths.map((p) => {
+        const rel = p.startsWith(VFS_DIR) ? relative(VFS_DIR, p) : p;
+        assertWithin(VFS_DIR, rel, "syncOutPath");
+        return rel;
+      });
+    }
   }
 
   snapshotVFS() {
@@ -82,57 +118,125 @@ export default class FileSystemHelper {
     return changes;
   }
 
-  async syncInHelper(localFolder: string) {
-    if (this.verbose) this.log(`Syncing in folder: ${localFolder}`);
-    for await (const entry of Deno.readDir(localFolder)) {
-      const localPath = join(localFolder, entry.name);
-      const vfsPath = localPath.replace(this.SHARED_DIR, this.VFS_DIR);
-      if ([".", ".."].includes(entry.name)) {
-        continue;
-      } else if (entry.isFile) {
-        const data = await Deno.readFile(localPath);
-        if (this.verbose) this.log(`Syncing in file: ${localPath}`);
-        this.pyodide.FS.writeFile(vfsPath, data);
-      } else {
-        this.pyodide.FS.mkdirTree(vfsPath);
-        await this.syncInHelper(localPath);
+  async syncInHelper(localFolder?: string) {
+    if (!localFolder) {
+      if (this.verbose) this.log("Syncing specific files");
+
+      for (const relativePath of this.syncInPaths || []) {
+        const localPath = join(this.SHARED_DIR, relativePath);
+        const vfsPath = join(this.VFS_DIR, relativePath);
+
+        try {
+          const stat = await Deno.stat(localPath);
+          if (stat.isFile) {
+            const data = await Deno.readFile(localPath);
+            this.pyodide.FS.mkdirTree(dirname(vfsPath)); // Ensure parent dirs exist
+            this.pyodide.FS.writeFile(vfsPath, data);
+            if (this.verbose) this.log(`✅ Synced file: ${relativePath}`);
+          } else if (stat.isDirectory) {
+            this.pyodide.FS.mkdirTree(vfsPath);
+            if (this.verbose) this.log(`📁 Created dir: ${relativePath}`);
+            await this.syncInHelper(localPath); // Recursively sync folder contents
+          }
+        } catch (err) {
+          this.log(
+            `❌ Failed to sync ${relativePath}: ${(err as Error).message}`
+          );
+        }
+      }
+    } else {
+      if (this.verbose) this.log(`Syncing entire folder: ${localFolder}`);
+      for await (const entry of Deno.readDir(localFolder)) {
+        const localPath = join(localFolder, entry.name);
+        const vfsPath = localPath.replace(this.SHARED_DIR, this.VFS_DIR);
+
+        if ([".", ".."].includes(entry.name)) continue;
+
+        if (entry.isFile) {
+          const data = await Deno.readFile(localPath);
+          this.pyodide.FS.mkdirTree(dirname(vfsPath));
+          this.pyodide.FS.writeFile(vfsPath, data);
+          if (this.verbose) this.log(`✅ Synced file: ${entry.name}`);
+        } else if (entry.isDirectory) {
+          this.pyodide.FS.mkdirTree(vfsPath);
+          await this.syncInHelper(localPath); // recurse
+        }
       }
     }
   }
 
-  async syncIn(localFolder: string) {
-    await this.syncInHelper(localFolder);
+  async syncIn() {
+    if (this.syncInPaths) {
+      await this.syncInHelper();
+    } else {
+      await this.syncInHelper(this.SHARED_DIR);
+    }
     // Take a snapshot for diffing later
     this.before = this.snapshotVFS();
   }
 
-  async syncOutHelper(mountedFolder: string, toSync: string[]) {
-    if (this.verbose) this.log(`Syncing out folder: ${mountedFolder}`);
-    const paths = this.pyodide.FS.readdir(mountedFolder);
-    for (const name of paths) {
+  private expandVfsFoldersToFiles(paths: string[]): string[] {
+    const expanded: string[] = [];
+
+    for (const path of paths) {
+      const fullPath = isAbsolute(path) ? path : join(this.VFS_DIR, path);
+
+      try {
+        const stat = this.pyodide.FS.stat(fullPath);
+        if (this.pyodide.FS.isFile(stat.mode)) {
+          expanded.push(relative(this.VFS_DIR, fullPath));
+        } else if (this.pyodide.FS.isDir(stat.mode)) {
+          const entries = this.pyodide.FS.readdir(fullPath);
+          for (const name of entries) {
+            if ([".", ".."].includes(name)) continue;
+            const sub = join(fullPath, name);
+            const subRel = relative(this.VFS_DIR, sub);
+            expanded.push(...this.expandVfsFoldersToFiles([subRel]));
+          }
+        }
+      } catch (e) {
+        if (this.verbose)
+          this.log(`⚠️ Skipping ${path}: ${(e as Error).message}`);
+      }
+    }
+
+    return expanded;
+  }
+
+  async syncOutHelper(currentVfsDir: string, toSync: string[]) {
+    if (this.verbose) this.log(`🔃 Syncing out from: ${currentVfsDir}`);
+
+    const entries = this.pyodide.FS.readdir(currentVfsDir);
+    for (const name of entries) {
       if ([".", ".."].includes(name)) continue;
 
-      const vfsPath = join(mountedFolder, name);
-      const hostPath = vfsPath.replace(this.VFS_DIR, this.SHARED_DIR);
+      const vfsPath = join(currentVfsDir, name);
+      const relativePath = relative(this.VFS_DIR, vfsPath);
+      const hostPath = join(this.SHARED_DIR, relativePath);
 
       try {
         const stat = this.pyodide.FS.stat(vfsPath);
+
         if (this.pyodide.FS.isFile(stat.mode)) {
-          if (!toSync.includes(vfsPath)) continue;
+          if (!toSync.includes(relativePath)) continue;
+
           const data = this.pyodide.FS.readFile(vfsPath);
-          if (this.verbose) this.log(`Syncing out file: ${hostPath}`);
+          await Deno.mkdir(dirname(hostPath), { recursive: true });
           await Deno.writeFile(hostPath, data);
-        } else {
-          if (toSync.includes(vfsPath)) {
-            await Deno.mkdir(hostPath);
+
+          if (this.verbose) this.log(`✅ Synced file: ${relativePath}`);
+        } else if (this.pyodide.FS.isDir(stat.mode)) {
+          // Only recurse if at least one toSync path is inside this folder
+          const hasChildren = toSync.some((p) =>
+            p.startsWith(relativePath + "/")
+          );
+          if (hasChildren) {
+            await this.syncOutHelper(vfsPath, toSync);
           }
-          await this.syncOutHelper(vfsPath, toSync);
         }
-      } catch (error) {
-        let message;
-        if (error instanceof Error) message = error.message;
-        else message = String(error);
-        console.error(`❌ Failed to sync ${name}:`, message);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`❌ Failed to sync ${relativePath}:`, message);
       }
     }
   }
@@ -142,13 +246,47 @@ export default class FileSystemHelper {
     const diff = this.diffVFS();
     this.log(`Sync diff: ${JSON.stringify(diff)}`);
 
-    const toSync = diff.added.concat(diff.modified);
+    // Combine added + modified
+    const changed = diff.added
+      .concat(diff.modified)
+      .map((p) => (isAbsolute(p) ? relative(this.VFS_DIR, p) : p));
+
+    let toSync: string[];
+
+    if (this.syncOutPaths) {
+      const normalized = this.syncOutPaths.map((p) =>
+        isAbsolute(p) ? relative(this.VFS_DIR, p) : p
+      );
+
+      const expanded = this.expandVfsFoldersToFiles(normalized);
+      toSync = changed.filter((p) => expanded.includes(p));
+    } else {
+      toSync = changed;
+    }
 
     await this.syncOutHelper(mountedFolder, toSync);
 
-    for (let i = 0; i < diff.deleted.length; i++) {
-      const path = diff.deleted[i];
-      await Deno.remove(path.replace(this.VFS_DIR, this.SHARED_DIR));
+    // Handle deletions
+    for (const deletedPath of diff.deleted) {
+      const rel = isAbsolute(deletedPath)
+        ? relative(this.VFS_DIR, deletedPath)
+        : deletedPath;
+
+      if (this.syncOutPaths) {
+        const normalized = this.syncOutPaths.map((p) =>
+          isAbsolute(p) ? relative(this.VFS_DIR, p) : p
+        );
+        const expanded = this.expandVfsFoldersToFiles(normalized);
+        if (!expanded.includes(rel)) continue;
+      }
+
+      const hostPath = join(this.SHARED_DIR, rel);
+      try {
+        await Deno.remove(hostPath);
+        if (this.verbose) this.log(`🗑️ Deleted: ${rel}`);
+      } catch (e) {
+        this.log(`⚠️ Failed to delete ${hostPath}: ${(e as Error).message}`);
+      }
     }
   }
 }

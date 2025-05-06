@@ -16,36 +16,6 @@ function log(...args: string[]) {
   console.error("[runner]", ...args);
 }
 
-// FileSystemHelper for syncing
-const fsHelper = new FileSystemHelper(
-  pyodide,
-  SHARED_DIR,
-  VFS_DIR,
-  log,
-  VERBOSE
-);
-
-// log("✅ Pyodide loaded");
-
-let sharedFolderExists = false;
-if (SHARED_DIR) {
-  try {
-    const stat = await Deno.stat(SHARED_DIR);
-    sharedFolderExists = stat.isDirectory;
-  } catch {
-    log(`⚠️ Shared folder "${SHARED_DIR}" not found — skipping sync.`);
-  }
-} else {
-  log("⚠️ No shared folder provided — skipping sync.");
-}
-
-// Only sync files if folder exists
-if (sharedFolderExists && SHARED_DIR) {
-  pyodide.FS.mkdirTree(VFS_DIR);
-  log("🔃 Syncing host files into VFS...");
-  await fsHelper.syncIn(SHARED_DIR);
-}
-
 // Bootstrap: inject logging setup + print prefix
 const PY_SETUP = `
 import logging
@@ -82,12 +52,42 @@ for await (const line of readLines(Deno.stdin)) {
     console.error("❌ Invalid JSON input:", message);
   }
 
-  if (input.shutdown) {
-    log("👋 Shutdown requested");
-    break;
-  }
-
   try {
+    let sharedFolderExists = false;
+    if (SHARED_DIR) {
+      try {
+        const stat = await Deno.stat(SHARED_DIR);
+        sharedFolderExists = stat.isDirectory;
+      } catch {
+        log(`⚠️ Shared folder "${SHARED_DIR}" not found — skipping sync.`);
+      }
+    } else {
+      log("⚠️ No shared folder provided — skipping sync.");
+    }
+
+    // FileSystemHelper for syncing
+    const fsHelper = new FileSystemHelper(
+      pyodide,
+      SHARED_DIR,
+      VFS_DIR,
+      log,
+      VERBOSE,
+      input.sync_in,
+      input.sync_out
+    );
+
+    // Only sync files if folder exists
+    if (sharedFolderExists && SHARED_DIR) {
+      pyodide.FS.mkdirTree(VFS_DIR);
+      log("🔃 Syncing host files into VFS...");
+      await fsHelper.syncIn();
+    }
+
+    if (input.shutdown) {
+      log("👋 Shutdown requested");
+      break;
+    }
+
     if (Array.isArray(input.packages) && input.packages.length > 0) {
       // Load micropip silently
       // log("🔧 Installing micropip...");
@@ -122,22 +122,23 @@ await _()
 
     console.log("@@RESULT@@" + JSON.stringify({ output: result }));
     log("✅ Code executed successfully");
+
+    if (sharedFolderExists && ALLOW_WRITE && SHARED_DIR) {
+      log("🔃 Syncing VFS → host...");
+      await fsHelper.syncOut(VFS_DIR);
+    } else if (!ALLOW_WRITE) {
+      log("⚠️ Skipping VFS → host sync because --allow-write was not enabled");
+    } else {
+      log("⚠️ Skipping VFS → host sync because shared folder is missing");
+    }
+
+    console.log("@@DONE@@");
   } catch (error) {
     let message;
     if (error instanceof Error) message = error.stack || error.message;
     else message = "Unknown error";
     console.log("@@RESULT@@" + JSON.stringify({ error: message }));
     log("❌ Execution error:", message);
+    console.log("@@DONE@@");
   }
-
-  if (sharedFolderExists && ALLOW_WRITE && SHARED_DIR) {
-    log("🔃 Syncing VFS → host...");
-    await fsHelper.syncOut(VFS_DIR);
-  } else if (!ALLOW_WRITE) {
-    log("⚠️ Skipping VFS → host sync because --allow-write was not enabled");
-  } else {
-    log("⚠️ Skipping VFS → host sync because shared folder is missing");
-  }
-
-  console.log("@@DONE@@");
 }
