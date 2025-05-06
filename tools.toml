@@ -3,5 +3,7 @@
 description = "Basic Python sandbox based on Deno + Pyodide"
 
 tools = [
+    "sandbox.get_shared_folder",
     "sandbox.run_code",
+    "sandbox.run_code_with_sync",
 ]
